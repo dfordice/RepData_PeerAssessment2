@@ -1,0 +1,123 @@
+---
+title: "Severe Storm Impact on US Economy and Population Health"
+output:
+  html_document:
+    fig_height: 5.5
+    fig_width: 7.5
+---
+
+##Synopsis
+
+This project involves exploring the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.  
+The exploration will endeavor to addresses the following questions:  
+1. Across the United States, which types of events are most harmful with respect to population health?  
+2. Across the United States, which types of events have the greatest economic consequences?
+
+## Load Packages and set knitr options
+First, all packages necessary for the data analysis must be loaded. The three packages listed are used in the following capacities:
+
+* knitR: Used in conjuntion with the R Markdown file to create an HTML file
+* dplyr: Used to assist with data manipuation
+* ggplot2: Used to create plots
+```{r}
+library(knitr)
+library(dplyr)
+library(ggplot2)
+```
+
+Also, we set "echo=TRUE" to ensure that all R code is displayed in the assignment and enable caching to speed up development.
+
+```{r}
+require(knitr)
+opts_chunk$set(echo = TRUE, cache = TRUE)
+```
+
+##Data Processing
+
+First the data must be downloaded into R and made available in a data frame with a little cleanup of dates. This will allow us to filter out events where there is not enough data to draw conclusions (pre-1996), and select only those variables needed for the analysis.  
+The following steps are accomplished:
+
+1. Download the file and create a data frame table
+2. Transform the "begin date" variable BGN_DATE to POSIX format as a reference for the filter
+3. Create a data set for health impact using only the following variables from 1986 on:
+
+    * Event Type (EVTYPE)
+    * Date (BGN_DATE)
+    * Fatalities (FATALITIES)
+    * Injuries (INJURIES)
+    * Casualties (created FATALITIES + INJURIES)
+    
+4. Create a data set for economic impact using only the following variables from 1986 on:
+
+    * Event Type (EVTYPE)
+    * Date (BGN_DATE)
+    * Property Damage and it's economic expression (PROPDMG, PROPDMGEXP)
+    * Crop Damage and it's economic expression (CROPDMG, CROPDMGEXP)
+
+```{r}
+temp <- tempfile()
+download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2", method="curl", temp)
+data <- tbl_df(read.csv(temp, header = TRUE, sep = ",", quote = "\""))
+unlink(temp)
+data$BGN_DATE<-as.POSIXct(data$BGN_DATE, tz = "", format = "%m/%d/%Y %H:%M:%S")
+# Create health impact data set
+data_health <- select(data, EVTYPE, BGN_DATE, FATALITIES, INJURIES)
+data_health <- filter(data_health, as.numeric(format(BGN_DATE, "%Y")) > 1995)
+data_health$CASUALTIES <- data_health$FATALITIES + data_health$INJURIES
+data_health <- filter(data_health, CASUALTIES > 0)
+data_health$EVTYPE <- tolower(data_health$EVTYPE)
+# Breakdown the data_health into a summary of casualties by event and filter out the events that had no casualties
+ev_health <- group_by(data_health, EVTYPE)
+ev_health1 <- summarize(ev_health, sum(CASUALTIES))
+colnames(ev_health1) <- c("EVTYPE", "CASUALTIES")
+# Create economic impact data set
+data_econ <- select(data, EVTYPE, BGN_DATE, PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP)
+data_econ <- filter(data_econ, as.numeric(format(BGN_DATE, "%Y")) > 1995)
+data_econ$EVTYPE <- tolower(data_econ$EVTYPE)
+# Normalize the millions and billions and leave out the rest
+# Property damage first
+data_econ_propm <- filter(data_econ, tolower(PROPDMGEXP) == "m")
+data_econ_propm <- select(data_econ_propm, -CROPDMG, -CROPDMGEXP)
+data_econ_propm$PROPDMG <- data_econ_propm$PROPDMG * .001
+data_econ_propb <- filter(data_econ, tolower(PROPDMGEXP) == "b")
+data_econ_propb <- select(data_econ_propb, -CROPDMG, -CROPDMGEXP)
+data_econ_prop <- rbind(data_econ_propm, data_econ_propb)
+data_econ_prop <- select(data_econ_prop, -BGN_DATE, -PROPDMGEXP)
+colnames(data_econ_prop) <- c("EVTYPE", "TTLDMG")
+
+#Crop Damage next
+
+data_econ_cropm <- filter(data_econ, tolower(CROPDMGEXP) == "m")
+data_econ_cropm <- select(data_econ_cropm, -PROPDMG, -PROPDMGEXP)
+data_econ_cropm$CROPDMG <- data_econ_cropm$CROPDMG * .001
+data_econ_cropb <- filter(data_econ, tolower(CROPDMGEXP) == "b")
+data_econ_cropb <- select(data_econ_cropb, -PROPDMG, -PROPDMGEXP)
+data_econ_crop <- rbind(data_econ_cropm, data_econ_cropb)
+data_econ_crop <- select(data_econ_crop, -BGN_DATE, -CROPDMGEXP)
+colnames(data_econ_crop) <- c("EVTYPE", "TTLDMG")
+ev_econ <- rbind(data_econ_crop, data_econ_prop)
+# Breakdown the economic data into a summary of economic cost by event
+ev_econ <- group_by(ev_econ, EVTYPE)
+ev_econ1 <- summarize(ev_econ, sum(TTLDMG))
+colnames(ev_econ1) <- c("EVTYPE", "TTLDMG")
+```
+
+
+##Results
+
+####Calculating the ten most unhealthy event types across the United States since 1996:
+
+```{r}
+ev_health_worst <- filter(ev_health1, CASUALTIES > 1338)
+ev_health_worst <- arrange(ev_health_worst, desc(CASUALTIES))
+par(mar = c(8, 8, 2, 2), mgp = c(6,2,1)); barplot(ev_health_worst$CASUALTIES, names.arg = ev_health_worst$EVTYPE, horiz = TRUE, las = 2, cex.names = .75, xlab = "Total Casualties Since 1996", ylab = "Event Type   ", main = "Worst Storm Impact on National Health")
+```
+
+####Calcualting the ten most economically costly event types across the United States since 1996:
+
+```{r}
+ev_econ_worst <- filter(ev_econ1, TTLDMG > 5.5)
+ev_econ_worst <- arrange(ev_econ_worst, desc(TTLDMG))
+par(mar = c(8, 8, 2, 2), mgp = c(6,2,1)); barplot(ev_econ_worst$TTLDMG, names.arg = ev_econ_worst$EVTYPE, horiz = TRUE, las = 2, cex.names = .75, xlab = "Total Economic Loss Since 1996 ($B)", ylab = "Event Type", main = "Worst Storm Impact on National Economy")
+```
+
